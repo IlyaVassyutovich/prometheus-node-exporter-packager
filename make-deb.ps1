@@ -41,8 +41,8 @@ try {
 	$Package = "node-exporter.deb"
 	dpkg-deb --build `
 		--root-owner-group `
-		deb `
-		node-exporter.deb
+		"deb" `
+		"node-exporter.deb"
 	Write-Host "Built deb-package"
 	Get-ChildItem $Package
 }
