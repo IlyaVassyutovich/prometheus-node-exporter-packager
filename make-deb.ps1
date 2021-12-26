@@ -27,13 +27,15 @@ try {
 		Write-Host "Checked hashes"
 	}
 
-	New-Item -ItemType Directory "deb/opt" | Out-Null
+	$DistDeb = Join-Path (Get-Location) "./deb"
+	$Bin = Join-Path $DistDeb "opt/node-exporter"
+	New-Item -ItemType Directory $Bin | Out-Null
 	tar --extract --file $ArchiveName `
-		--directory "deb/opt" `
+		--directory $Bin `
 		--strip-components 1
 	Write-Host "Extracted binaries"
 
-	Get-ChildItem $Deb | Copy-Item -Destination "deb" -Recurse
+	Get-ChildItem $Deb | Copy-Item -Destination $DistDeb -Recurse
 	Write-Host "Copied predefined package files"
 
 	$Package = "node-exporter.deb"
