@@ -1,0 +1,9 @@
+#!/usr/bin/env sh
+
+USERNAME="node-exporter"
+
+adduser --system \
+    --home /nonexistent \
+    --no-create-home \
+    --shell $(which nologin) \
+    $USERNAME
