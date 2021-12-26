@@ -27,8 +27,6 @@ try {
 		Write-Host "Checked hashes"
 	}
 
-	# TODO: Verify permissions are correct upon installation
-
 	New-Item -ItemType Directory "deb/opt" | Out-Null
 	tar --extract --file $ArchiveName `
 		--directory "deb/opt" `
