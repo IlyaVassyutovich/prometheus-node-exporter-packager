@@ -1,6 +1,7 @@
 [Unit]
 Description=Prometheus exporter for machine metrics
 Documentation=https://github.com/prometheus/node_exporter
+After=network-online.target
 
 [Service]
 Restart=on-failure
