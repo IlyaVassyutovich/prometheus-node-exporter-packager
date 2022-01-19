@@ -7,3 +7,5 @@ adduser --system \
     --no-create-home \
     --shell $(which nologin) \
     $USERNAME
+
+systemctl daemon-reload
