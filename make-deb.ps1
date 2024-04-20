@@ -2,8 +2,8 @@
 
 $ErrorActionPreference = "Stop"
 
-$Dist = Resolve-Path "./dist"
-$Deb = Resolve-Path "./deb"
+$Dist = Join-Path (Resolve-Path .) "./dist"
+$Deb = Join-Path (Resolve-Path .) "./deb"
 
 Remove-Item $Dist -Recurse -ErrorAction "Ignore"
 Write-Host "Cleaned up artifacts"
