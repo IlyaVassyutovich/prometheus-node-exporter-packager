@@ -11,8 +11,8 @@ New-Item $Dist -ItemType Directory | Out-Null
 
 Push-Location $Dist
 try {
-	$NEVersion = "1.3.1"
-	$NEHash = "68f3802c2dd3980667e4ba65ea2e1fb03f4a4ba026cca375f15a0390ff850949"
+	$NEVersion = "1.7.0"
+	$NEHash = "a550cd5c05f760b7934a2d0afad66d2e92e681482f5f57a917465b1fba3b02a6"
 	$ArchiveName = "node_exporter.tar.gz"
 
 	Invoke-WebRequest "https://github.com/prometheus/node_exporter/releases/download/v$NEVersion/node_exporter-$NEVersion.linux-amd64.tar.gz" `
