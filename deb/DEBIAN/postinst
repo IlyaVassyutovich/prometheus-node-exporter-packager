@@ -2,10 +2,13 @@
 
 USERNAME="node-exporter"
 
-adduser --system \
+adduser \
+    --system \
     --home /nonexistent \
     --no-create-home \
     --shell $(which nologin) \
+    --disabled-login \
+    --group \
     $USERNAME
 
 systemctl daemon-reload
