@@ -1,11 +1,31 @@
 #!/usr/bin/env sh
 
 USERNAME="node-exporter"
+TEXTFILE_WRITERS="node-exporter-textfile-writers"
 
-adduser --system \
+addgroup \
+    --system \
+    $TEXTFILE_WRITERS
+
+adduser \
+    --system \
     --home /nonexistent \
     --no-create-home \
     --shell $(which nologin) \
+    --disabled-login \
+    --group \
     $USERNAME
+
+usermod \
+    --append \
+    --groups $TEXTFILE_WRITERS \
+    $USERNAME
+
+install \
+    --directory \
+    --owner $USERNAME \
+    --group $TEXTFILE_WRITERS \
+    --mode 0770 \
+    /var/run/node-exporter-textfiles/
 
 systemctl daemon-reload
