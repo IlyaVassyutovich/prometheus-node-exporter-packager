@@ -28,15 +28,14 @@ try {
 	}
 
 	$DistDeb = Join-Path (Get-Location) "./deb"
+	Copy-Item -Recurse -Path $Deb -Destination $DistDeb
+	Write-Host "Copied predefined package files"
+
 	$Bin = Join-Path $DistDeb "opt/node-exporter"
-	New-Item -ItemType Directory $Bin | Out-Null
 	tar --extract --file $ArchiveName `
 		--directory $Bin `
 		--strip-components 1
 	Write-Host "Extracted binaries"
-
-	Get-ChildItem $Deb | Copy-Item -Destination $DistDeb -Recurse
-	Write-Host "Copied predefined package files"
 
 	$Package = "node-exporter.deb"
 	dpkg-deb --build `

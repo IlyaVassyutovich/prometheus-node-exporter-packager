@@ -1,0 +1,1 @@
+- [ ] Properly configure postinst/postrm with [`dh_installsystem`](https://manpages.debian.org/testing/debhelper/dh_installsystemd.1.en.html)
