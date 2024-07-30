@@ -21,11 +21,4 @@ usermod \
     --groups $TEXTFILE_WRITERS \
     $USERNAME
 
-install \
-    --directory \
-    --owner $USERNAME \
-    --group $TEXTFILE_WRITERS \
-    --mode 0770 \
-    /var/run/node-exporter-textfiles/
-
 systemctl daemon-reload
