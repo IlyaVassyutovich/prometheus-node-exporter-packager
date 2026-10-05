@@ -1,0 +1,5 @@
+#Type Path                                      Mode UID  GID
+d     /var/lib/node-exporter                    0755 root root
+d     /var/lib/node-exporter/textfile-collector 2775 root node-exporter-textfile-writers
+d     /run/node-exporter                        0755 root root
+d     /run/node-exporter/textfile-collector     2775 root node-exporter-textfile-writers

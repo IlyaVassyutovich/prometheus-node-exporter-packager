@@ -1,0 +1,3 @@
+#Type Name                           ID GECOS
+u     node-exporter                  -  "Prometheus node exporter"
+g     node-exporter-textfile-writers -

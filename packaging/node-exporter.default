@@ -1,0 +1,7 @@
+# Extra command-line arguments for node-exporter, split on whitespace.
+# Run `node-exporter --help` for the available options.
+#
+# The two packaged textfile directories are always passed by the unit:
+#   /var/lib/node-exporter/textfile-collector   kept across reboots
+#   /run/node-exporter/textfile-collector       emptied on reboot
+ARGS=""

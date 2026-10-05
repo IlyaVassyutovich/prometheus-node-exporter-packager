@@ -1,0 +1,19 @@
+[Unit]
+Description=Prometheus exporter for machine metrics
+Documentation=https://github.com/prometheus/node_exporter
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+User=node-exporter
+Group=node-exporter
+EnvironmentFile=-/etc/default/node-exporter
+ExecStart=/usr/bin/node-exporter \
+    --collector.textfile.directory=/var/lib/node-exporter/textfile-collector \
+    --collector.textfile.directory=/run/node-exporter/textfile-collector \
+    $ARGS
+Restart=on-failure
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
