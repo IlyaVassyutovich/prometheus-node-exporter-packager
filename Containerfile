@@ -28,3 +28,18 @@ RUN PRERELEASE="$PRERELEASE" bash build.sh "$TARGETARCH"
 FROM scratch AS package
 COPY --from=build /src/dist/*.deb /dist/
 CMD ["/never-run"]
+
+FROM debian:13-slim AS test
+# Debian's container images ship a policy-rc.d that forbids starting
+# services during package installation. A real host has none, and the smoke
+# test is about what happens on a real host.
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends systemd init-system-helpers curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && rm -f /usr/sbin/policy-rc.d
+COPY --from=package /dist/ /smoke/
+COPY versions.env test/smoke.sh /smoke/
+COPY test/smoke.service /etc/systemd/system/smoke.service
+RUN systemctl enable smoke.service
+# Boot status lines would bury the test's own output.
+CMD ["/usr/lib/systemd/systemd", "--show-status=false"]

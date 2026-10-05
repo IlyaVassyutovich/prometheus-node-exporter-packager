@@ -1,0 +1,19 @@
+[Unit]
+Description=node-exporter package smoke test
+# The container exists only to run this unit, so the unit's result becomes
+# the container's exit code.
+SuccessAction=exit
+FailureAction=exit
+
+[Service]
+Type=oneshot
+EnvironmentFile=/smoke/versions.env
+ExecStart=/bin/sh /smoke/smoke.sh
+# The journal dies with the container; the console is what `run` shows.
+StandardOutput=journal+console
+StandardError=journal+console
+# A hang must end the container with a failure instead of blocking CI.
+TimeoutStartSec=120
+
+[Install]
+WantedBy=multi-user.target
