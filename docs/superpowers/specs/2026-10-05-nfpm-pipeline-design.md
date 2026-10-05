@@ -15,7 +15,7 @@ Version 1 of this repo (`make-deb.ps1` plus a `deb/` tree built with `dpkg-deb`)
 - Pushing a tag `v<upstream>-<revision>` produces a GitHub Release with one `.deb` per architecture and a `SHA256SUMS` file.
 - `dpkg -i` of the `.deb` on a clean Debian host yields a running, enabled `node-exporter` service answering on port 9100.
 - A `.prom` file dropped into either textfile directory shows up in `/metrics`.
-- The whole build and test runs locally on a machine that has only Docker or Podman.
+- The whole build and test runs locally on a machine that has only Podman.
 
 ## Decisions
 
@@ -39,7 +39,7 @@ Version 1 of this repo (`make-deb.ps1` plus a `deb/` tree built with `dpkg-deb`)
 
 ```
 versions.env                  upstream version, package revision, SHA256 per arch
-Dockerfile                    stages: build, package, test
+Containerfile                 stages: build, package, test
 build.sh <arch>               runs inside the build stage: download, verify, extract, nFPM
 nfpm.yaml                     package definition; version and arch come from the environment
 packaging/
@@ -70,7 +70,7 @@ Plain `KEY=value` lines, readable by shell and by systemd's `EnvironmentFile`:
 - `PACKAGE_REVISION` — Debian revision, starts at `1`, reset to `1` on every upstream bump
 - `NODE_EXPORTER_SHA256_AMD64`, `NODE_EXPORTER_SHA256_ARM64` — SHA256 of the upstream `linux-<arch>` tarballs
 
-### Container build (`Dockerfile`)
+### Container build (`Containerfile`)
 
 Three stages:
 
@@ -84,16 +84,16 @@ nFPM comes from its official image, pinned by the digest of its multi-architectu
 
 `build` runs on the build platform and only reads the target architecture as a value, because packaging is a download-and-repack: an arm64 package can be produced on an amd64 machine without emulation. `test` needs the target platform, so it runs natively: any developer machine tests its own architecture, and CI uses one native runner per architecture.
 
-The three commands that make up the harness, identical for `docker` and `podman`, locally and in CI:
+The commands that make up the harness, the same locally and in CI (GitHub's Ubuntu runners ship Podman):
 
 ```
-<engine> build --target package --tag node-exporter-package .
-<engine> create --name node-exporter-package node-exporter-package
-<engine> cp node-exporter-package:/dist/. dist
-<engine> rm node-exporter-package
+podman build --target package --tag node-exporter-package .
+podman create --name node-exporter-package node-exporter-package
+podman cp node-exporter-package:/dist/. dist
+podman rm node-exporter-package
 
-<engine> build --target test --tag node-exporter-smoke .
-<engine> run --rm --tty --privileged node-exporter-smoke
+podman build --target test --tag node-exporter-smoke .
+podman run --rm --tty --privileged node-exporter-smoke
 ```
 
 The package is copied out of a created container because `build --output`, the shorter way, is not supported by Podman on Windows and macOS.

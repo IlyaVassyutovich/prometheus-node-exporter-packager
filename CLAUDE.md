@@ -10,7 +10,7 @@ This repo repackages the upstream Prometheus node_exporter release binary as a D
 
 **All versions live in one place.** A version bump should be a one-file change that is easy to review.
 
-**Containers are the only build environment.** A developer machine is assumed to have Docker or Podman and nothing else: no particular shell, no Debian tooling, no nFPM. Local runs and CI execute the same container commands, so there is one code path and "works on my machine" cannot diverge from CI. This is also why there are no host-side wrapper scripts, and why only container features that both engines support on every host OS are used, even where an engine-specific shortcut exists.
+**Containers are the only build environment.** A developer machine is assumed to have Podman and nothing else: no particular shell, no Debian tooling, no nFPM. Local runs and CI execute the same container commands, so there is one code path and "works on my machine" cannot diverge from CI. This is also why there are no host-side wrapper scripts, and why only features that Podman supports on every host OS are used, even where a shorter Linux-only form exists.
 
 **Follow Debian conventions instead of inventing.** Standard paths, declarative user and directory creation, and the same service-handling snippets Debian's own tooling generates. A host admin should find nothing surprising. When in doubt, do what a package from the Debian archive would do.
 

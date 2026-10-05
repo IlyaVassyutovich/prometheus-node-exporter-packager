@@ -31,7 +31,7 @@ The package conflicts with Debian's `prometheus-node-exporter`.
 
 ## Build and test locally
 
-The only requirement is Docker or Podman; the commands are the same for both (replace `podman` with `docker`).
+The only requirement is Podman.
 
 Build the package and copy it to `dist/`:
 
