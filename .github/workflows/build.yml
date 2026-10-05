@@ -28,19 +28,22 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Show container engine
+        run: podman version
+
       # The same commands a developer runs locally; see the README.
       - name: Build package
         run: |
-          docker build --target package --tag node-exporter-package .
-          docker create --name node-exporter-package node-exporter-package
-          docker cp node-exporter-package:/dist/. dist
-          docker rm node-exporter-package
+          podman build --target package --tag node-exporter-package .
+          podman create --name node-exporter-package node-exporter-package
+          podman cp node-exporter-package:/dist/. dist
+          podman rm node-exporter-package
 
       - name: Build test image
-        run: docker build --target test --tag node-exporter-smoke .
+        run: podman build --target test --tag node-exporter-smoke .
 
       - name: Smoke test
-        run: docker run --rm --tty --privileged node-exporter-smoke
+        run: podman run --rm --tty --privileged node-exporter-smoke
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
