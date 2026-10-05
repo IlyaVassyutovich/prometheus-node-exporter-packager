@@ -1,1 +1,3 @@
-- [ ] Properly configure postinst/postrm with [`dh_installsystem`](https://manpages.debian.org/testing/debhelper/dh_installsystemd.1.en.html)
+- [ ] Publish a signed apt repository so hosts update through `apt upgrade`
+- [ ] Track upstream node_exporter releases automatically
+- [ ] Build for armhf
