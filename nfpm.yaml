@@ -1,0 +1,74 @@
+name: node-exporter
+arch: ${PACKAGE_ARCH}
+platform: linux
+version: ${PACKAGE_VERSION}
+release: ${PACKAGE_REVISION}
+section: net
+priority: optional
+maintainer: Ilya Vassyutovich <me@iv.link>
+description: |
+  Prometheus exporter for machine metrics
+  Upstream node_exporter release binary, repackaged with a systemd unit,
+  a dedicated system user and two textfile collector directories.
+homepage: https://github.com/prometheus/node_exporter
+license: Apache-2.0
+
+depends:
+  - systemd
+  - init-system-helpers
+conflicts:
+  # Debian's own package listens on the same port.
+  - prometheus-node-exporter
+
+# Modes and owners are spelled out on every entry so the package never
+# inherits whatever modes the build context happened to have; a checkout on
+# Windows has none worth trusting.
+contents:
+  - src: dist/staging/upstream/node_exporter
+    dst: /usr/bin/node-exporter
+    file_info:
+      mode: 0755
+      owner: root
+      group: root
+  - src: packaging/node-exporter.service
+    dst: /usr/lib/systemd/system/node-exporter.service
+    file_info:
+      mode: 0644
+      owner: root
+      group: root
+  - src: packaging/node-exporter.default
+    dst: /etc/default/node-exporter
+    type: config|noreplace
+    file_info:
+      mode: 0644
+      owner: root
+      group: root
+  - src: packaging/node-exporter.sysusers
+    dst: /usr/lib/sysusers.d/node-exporter.conf
+    file_info:
+      mode: 0644
+      owner: root
+      group: root
+  - src: packaging/node-exporter.tmpfiles
+    dst: /usr/lib/tmpfiles.d/node-exporter.conf
+    file_info:
+      mode: 0644
+      owner: root
+      group: root
+  - src: dist/staging/upstream/LICENSE
+    dst: /usr/share/doc/node-exporter/LICENSE
+    file_info:
+      mode: 0644
+      owner: root
+      group: root
+  - src: dist/staging/upstream/NOTICE
+    dst: /usr/share/doc/node-exporter/NOTICE
+    file_info:
+      mode: 0644
+      owner: root
+      group: root
+
+scripts:
+  postinstall: packaging/scripts/postinstall.sh
+  preremove: packaging/scripts/preremove.sh
+  postremove: packaging/scripts/postremove.sh
