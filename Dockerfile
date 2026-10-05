@@ -16,10 +16,9 @@ WORKDIR /src
 COPY versions.env nfpm.yaml build.sh ./
 COPY packaging/ packaging/
 ARG TARGETARCH
-ARG PRERELEASE=""
 # Invoked through bash so the result does not depend on the executable bit,
 # which a Windows checkout does not carry into the build context.
-RUN PRERELEASE="$PRERELEASE" bash build.sh "$TARGETARCH"
+RUN bash build.sh "$TARGETARCH"
 
 # Holds nothing but the package, for copying out to the host. `build --output`
 # would be shorter, but Podman on Windows and macOS does not support it, so

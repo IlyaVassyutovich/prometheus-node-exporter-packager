@@ -49,7 +49,7 @@ podman build --target test --tag node-exporter-smoke .
 podman run --rm --tty --privileged node-exporter-smoke
 ```
 
-The test boots a throw-away Debian container with systemd, installs the package in it and checks that the exporter runs. Among systemd's own boot messages it prints `SMOKE PASS` and exits 0 on success; on failure it exits non-zero, normally with a `SMOKE FAIL: <reason>` line.
+The test boots a throw-away Debian container with systemd, installs the package in it and checks that the exporter runs. Among systemd's own boot messages it prints a `SMOKE ok: ...` line per check, then `SMOKE PASS`, and exits 0. A failed check prints `SMOKE FAIL: ...` and the container exits non-zero.
 
 Add `--platform linux/arm64` to the first `build` to produce the other architecture. The test runs on your machine's own architecture.
 
@@ -58,10 +58,11 @@ In Git Bash on Windows, prefix the `cp` command with `MSYS_NO_PATHCONV=1`, other
 ## Release
 
 1. Edit `versions.env`: set the new upstream version and both hashes with `PACKAGE_REVISION=1`, or raise `PACKAGE_REVISION` for a packaging-only change.
-2. Optional: run the `build` workflow by hand on your branch (Actions tab, or `gh workflow run build --ref <branch>`). It publishes a pre-release you can try on a host; its version sorts below the final one, so the final release installs over it as a normal upgrade.
-3. Merge to `master` and wait for a green build.
-4. Tag the merge commit `v<version>-<revision>`, for example `v1.12.1-1`, and push the tag.
+2. Merge to `master` and wait for a green build.
+3. Tag the merge commit `v<version>-<revision>`, for example `v1.12.1-1`, and push the tag.
 
-The workflow refuses to publish a release if the tag does not match `versions.env`. Pre-releases are not cleaned up automatically.
+The workflow refuses to publish a release if the tag does not match `versions.env`.
+
+To try a package before releasing it, download the `deb-<arch>` artifact from the pull request's workflow run.
 
 ![wzrd](https://wzrd.iv.link)

@@ -1,4 +1,3 @@
 - [ ] Publish a signed apt repository so hosts update through `apt upgrade`
 - [ ] Track upstream node_exporter releases automatically
-- [ ] Clean up old pre-releases automatically
 - [ ] Build for armhf

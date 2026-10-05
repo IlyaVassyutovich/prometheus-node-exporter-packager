@@ -35,7 +35,5 @@ tar --extract --gzip --file "$TARBALL" --directory "$STAGING/upstream" --strip-c
 
 export PACKAGE_ARCH=$ARCH
 export PACKAGE_VERSION=$NODE_EXPORTER_VERSION
-# "~" sorts before everything in Debian version ordering, even the end of
-# the string, so a pre-release is always older than the release it precedes.
-export PACKAGE_REVISION="${PACKAGE_REVISION}${PRERELEASE:+~${PRERELEASE}}"
+export PACKAGE_REVISION
 nfpm package --config nfpm.yaml --packager deb --target dist/

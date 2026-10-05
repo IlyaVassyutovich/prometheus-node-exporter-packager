@@ -28,8 +28,6 @@ This repo repackages the upstream Prometheus node_exporter release binary as a D
 
 **A failed service start does not fail the package installation.** This is the Debian norm: a half-configured package is harder to recover from than a stopped service. The smoke test exists to catch this case before a release.
 
-**Pre-release versions use `~`.** In Debian version ordering it sorts before everything, so every pre-release is older than the release it leads to and the final package installs over it as a normal upgrade. Never join a pre-release suffix with anything else.
-
 ## Testing
 
 There is one smoke test, and that is deliberate. It answers a single question: does this package give a working exporter on a fresh host? It installs the package into a booted systemd container the way a real host would.
@@ -38,11 +36,13 @@ Do not grow it into a lifecycle suite. Upgrade, removal, purge and config-preser
 
 ## Releasing
 
-A final release is cut by a human pushing a tag, and CI refuses to publish if the tag disagrees with the pinned versions: the tag is a statement of intent, the pinned file is the truth, and they must not drift. Pre-releases are produced on demand from any branch so a change can be tried on a real host before it is merged.
+A final release is cut by a human pushing a tag, and CI refuses to publish if the tag disagrees with the pinned versions: the tag is a statement of intent, the pinned file is the truth, and they must not drift.
+
+There is no pre-release flow. It was designed and then dropped: it added version-ordering rules, a second publishing path and clean-up duties, which is more than trying a build on a host is worth. The package built for any pull request is available as a CI artifact, and that covers the need.
 
 ## Working in this repo
 
-- Line endings are forced to LF because everything here runs on Linux even when it is edited on Windows.
+- Line endings are forced to LF only for files that are executed or parsed on Linux (scripts, pinned values, everything that goes into the package or the test container), because those break on a Windows checkout otherwise. Other files are left to each contributor's git settings.
 - Nothing may depend on file modes or executable bits from the checkout, for the same reason.
 - Comments say why, not what.
 - If a change needs a new tool on the host, it is the wrong change; put the tool in a container stage.

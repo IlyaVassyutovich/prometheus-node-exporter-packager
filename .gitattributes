@@ -1,3 +1,7 @@
-# Everything here ends up running on Linux; a CRLF checkout on Windows would
-# put "\r" into shell scripts and unit files and break them.
-* text=auto eol=lf
+# These files are executed or parsed on Linux, inside the build container or
+# on the host the package is installed on. A CRLF checkout on Windows would
+# put "\r" into shell scripts, pinned values and systemd configuration.
+*.sh text eol=lf
+versions.env text eol=lf
+packaging/** text eol=lf
+test/** text eol=lf

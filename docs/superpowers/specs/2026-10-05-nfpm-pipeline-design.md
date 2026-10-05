@@ -13,7 +13,6 @@ Version 1 of this repo (`make-deb.ps1` plus a `deb/` tree built with `dpkg-deb`)
 ## Success criteria
 
 - Pushing a tag `v<upstream>-<revision>` produces a GitHub Release with one `.deb` per architecture and a `SHA256SUMS` file.
-- Running the workflow by hand on any branch produces a GitHub pre-release with the same assets, versioned so that it sorts below the final release.
 - `dpkg -i` of the `.deb` on a clean Debian host yields a running, enabled `node-exporter` service answering on port 9100.
 - A `.prom` file dropped into either textfile directory shows up in `/metrics`.
 - The whole build and test runs locally on a machine that has only Docker or Podman.
@@ -30,7 +29,7 @@ Version 1 of this repo (`make-deb.ps1` plus a `deb/` tree built with `dpkg-deb`)
 | Textfile collector | Two directories, persistent and volatile, both read by default |
 | Version pinning | Upstream version, package revision and per-arch SHA256 committed to the repo |
 | Final release | Git tag; must match the pinned version |
-| Pre-release | Manual workflow run on any branch |
+| Pre-release | None; a pull request's CI artifact serves for trying a build |
 | Build environment | Containers only; local and CI run the same container build |
 | Test scope | One minimal smoke scenario, on purpose |
 | Test tooling | A short POSIX `sh` script inside a systemd container |
@@ -84,8 +83,6 @@ Three stages:
 nFPM comes from its official image, pinned by the digest of its multi-architecture index (Podman rejects a reference with both a tag and a digest), and is copied into the `build` stage.
 
 `build` runs on the build platform and only reads the target architecture as a value, because packaging is a download-and-repack: an arm64 package can be produced on an amd64 machine without emulation. `test` needs the target platform, so it runs natively: any developer machine tests its own architecture, and CI uses one native runner per architecture.
-
-An optional `PRERELEASE` build argument is appended to the Debian revision (see Versioning).
 
 The three commands that make up the harness, identical for `docker` and `podman`, locally and in CI:
 
@@ -190,11 +187,15 @@ The script installs the package with `dpkg -i` on the live system, as on a real 
 2. `/metrics` answers and `node_exporter_build_info` reports the pinned upstream version;
 3. a metric written to each of the two textfile directories is served.
 
+Each check prints a line when it passes as well as when it fails, so a log shows how far a run got.
+
+Line endings are forced to LF only for the files that are executed or parsed on Linux: shell scripts, `versions.env`, and everything under `packaging/` and `test/`.
+
 Debian's container images ship a `policy-rc.d` that forbids starting services during package installation. The `test` image removes it so that the install behaves as it would on a real host.
 
 ### Workflow (`.github/workflows/build.yml`)
 
-Triggers: push to `master`, pull requests, tags matching `v*`, and manual `workflow_dispatch`.
+Triggers: push to `master`, pull requests, and tags matching `v*`.
 
 **`build` job** — matrix:
 
@@ -203,29 +204,17 @@ Triggers: push to `master`, pull requests, tags matching `v*`, and manual `workf
 | amd64 | `ubuntu-latest` |
 | arm64 | `ubuntu-24.04-arm` |
 
-Steps: check out, run the three harness commands, upload the `.deb` as a workflow artifact. On a manual run the `PRERELEASE` build argument is set.
+Steps: check out, run the harness commands, upload the `.deb` as a workflow artifact.
 
-**`release` job** — runs for tags and manual runs, needs `build`:
+**`release` job** — runs for tags only, needs `build`: fail unless the tag equals `v${NODE_EXPORTER_VERSION}-${PACKAGE_REVISION}` from `versions.env`; then create the GitHub Release with the two `.deb` files and a `SHA256SUMS`.
 
-- Tag: fail unless the tag equals `v${NODE_EXPORTER_VERSION}-${PACKAGE_REVISION}` from `versions.env`; create the GitHub Release.
-- Manual run: create a GitHub pre-release, with a new tag pointing at the built commit.
-
-Both attach the two `.deb` files and a `SHA256SUMS`.
-
-Workflow-level permissions are `contents: read`; only `release` gets `contents: write`. Third-party actions are pinned by commit SHA.
-
-A manual run can only be started once the workflow file exists on the default branch, so the first pre-release is possible only after this work is merged.
+Workflow-level permissions are `contents: read`; only `release` gets `contents: write`. Third-party actions are pinned by commit SHA. Both jobs have a timeout.
 
 ## Versioning
 
-| Kind | Debian version | Git tag |
-|---|---|---|
-| Final | `1.12.1-1` | `v1.12.1-1` (pushed by hand) |
-| Pre-release | `1.12.1-1~pre<run>.<sha7>` | `v1.12.1-1-pre<run>.<sha7>` (created by the workflow) |
+The Debian version is `<upstream>-<revision>` (`1.12.1-1`) and the release tag is the same with a `v` prefix.
 
-`<run>` is the workflow run number and `<sha7>` the short commit hash. In Debian version ordering `~` sorts before everything, including the end of the string, so every pre-release is older than its final release and `dpkg -i` of the final one is a normal upgrade. Successive pre-releases order by run number. Git tags cannot contain `~`, hence the `-` in the tag.
-
-Pre-releases are not cleaned up automatically.
+A pre-release flow (manual workflow run, `~`-suffixed versions, GitHub pre-releases) was implemented and then removed: it complicated the build, the workflow and the versioning rules beyond its usefulness. The `.deb` artifact of a pull request's workflow run can be downloaded and installed when a build needs trying on a host.
 
 ## Error handling
 
@@ -247,18 +236,17 @@ Not tested, by decision: conffile preservation on upgrade, enable/disable state 
 ## Release procedure
 
 1. Edit `versions.env`: new upstream version and hashes with revision `1`, or bump the revision for a packaging-only change.
-2. Optionally run the workflow by hand on the branch to get a pre-release and try it on a host.
-3. Merge to `master`; the build must be green.
-4. Tag the merge commit `v<version>-<revision>` and push the tag.
+2. Merge to `master`; the build must be green.
+3. Tag the merge commit `v<version>-<revision>` and push the tag.
 
 ## `CLAUDE.md`
 
-A short file for future agent sessions and contributors. It records the reasons behind the choices in this document and the constraints that are not visible in the code: containers only, pin and verify everything, minimal test scope, Debian conventions over invention, the pre-release versioning rule. It names no files and no line numbers, so it does not go stale when the code moves; the code explains how.
+A short file for future agent sessions and contributors. It records the reasons behind the choices in this document and the constraints that are not visible in the code: containers only, pin and verify everything, minimal test scope, Debian conventions over invention. It names no files and no line numbers, so it does not go stale when the code moves; the code explains how.
 
 ## Out of scope
 
 - **Migration from v1.** The package name is unchanged, so `dpkg` upgrades in place and removes v1's files. `ARGS` set in `/etc/node-exporter/node-exporter.conf` are dropped, and textfile writers must be pointed at the new directories. Both are handled by hand per host.
 - apt repository and package signing.
 - Automatic tracking of upstream releases.
-- Automatic clean-up of old pre-releases.
+- Pre-releases (see Versioning).
 - Other architectures (armhf and beyond) and other package formats (rpm, apk).

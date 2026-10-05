@@ -1,8 +1,10 @@
 root = true
 
 [*]
-end_of_line = lf
 insert_final_newline = true
+
+[{*.sh,versions.env,packaging/**,test/**}]
+end_of_line = lf
 
 [*.sh]
 indent_style = space
