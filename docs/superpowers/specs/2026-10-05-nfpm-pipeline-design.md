@@ -48,7 +48,11 @@ packaging/
     postinstall.sh
     preremove.sh
     postremove.sh
+test/
+  smoke.sh <deb>                  install-and-verify test; needs root on a systemd host
+  build-rejects.sh                build.sh refuses a bad arch and a wrong hash
 .github/workflows/build.yml
+.gitattributes                    LF line endings for everything
 ```
 
 `make-deb.ps1` and `deb/` are retired. `.gitignore` covers `dist/` and `.worktrees/`.
@@ -69,8 +73,8 @@ The pinned upstream version is the latest stable release at implementation time.
 
 Input: one of `amd64`, `arm64`. Output: `dist/node-exporter_<version>-<revision>_<arch>.deb`.
 
-1. Source `versions.env`.
-2. Download `node_exporter-<version>.linux-<arch>.tar.gz` from the upstream GitHub release into a per-arch work directory under `dist/`.
+1. Source `versions.env` (or the file named by `VERSIONS_FILE`, which exists so the hash check can be tested).
+2. Download `node_exporter-<version>.linux-<arch>.tar.gz` from the upstream GitHub release into `dist/staging/`, which is recreated on every run.
 3. Verify the SHA256 against the pinned value. Abort on mismatch.
 4. Extract the tarball.
 5. Run `nfpm package --packager deb` with version, revision, architecture and the extracted directory passed through the environment.
@@ -102,12 +106,13 @@ Every entry in `contents` sets owner and mode explicitly so that a build on Wind
 - `User=node-exporter`, `Group=node-exporter`
 - `EnvironmentFile=-/etc/default/node-exporter`
 - `ExecStart=/usr/bin/node-exporter --collector.textfile.directory=/var/lib/node-exporter/textfile-collector --collector.textfile.directory=/run/node-exporter/textfile-collector $ARGS`
-- `ExecReload=/bin/kill -HUP $MAINPID`
 - `Restart=on-failure`
 - `NoNewPrivileges=true`
 - `WantedBy=multi-user.target`
 
 Hardening stops at `NoNewPrivileges`. Stricter sandboxing (`ProtectHome`, `ProtectSystem=strict`) hides parts of the host that node_exporter is meant to measure.
+
+There is no `ExecReload`: node_exporter has no reload handler, so a `SIGHUP` would terminate it, and systemd treats that as a clean exit that `Restart=on-failure` does not recover.
 
 The textfile flags live in the unit, not in `ARGS`, because the package provisions those directories; `ARGS` is for per-host additions.
 
@@ -129,13 +134,15 @@ Jobs that publish metrics run as a member of `node-exporter-textfile-writers`. T
 
 ### Maintainer scripts
 
-POSIX `sh`, behaving as `dh_installsystemd` output would. Each script branches on the dpkg action argument.
+POSIX `sh`, using the same `deb-systemd-helper` and `deb-systemd-invoke` snippets that `dh_installsystemd` generates. Each script branches on the dpkg action argument. The package therefore depends on `systemd` and `init-system-helpers`.
 
-- **postinstall** (`configure`): `systemd-sysusers` and `systemd-tmpfiles --create` for the package's files, `systemctl daemon-reload`. First install: enable and start. Upgrade: restart if enabled.
-- **preremove** (`remove`): stop and disable. Does nothing on `upgrade`.
-- **postremove**: `daemon-reload`. On `purge`, delete `/var/lib/node-exporter`. The system user and groups stay, per Debian convention.
+- **postinstall** (`configure`): `systemd-sysusers` and `systemd-tmpfiles --create` for the package's files, `systemctl daemon-reload`. First install: enable and start. Upgrade or reinstall: restart. A service the admin disabled stays disabled and stopped.
+- **preremove** (`remove`): stop. Does nothing on `upgrade`.
+- **postremove**: `daemon-reload`. On `remove`, mask the unit while keeping its enablement state, so a later reinstall comes back enabled. On `purge`, drop that state and delete `/var/lib/node-exporter` and `/run/node-exporter`. The system user and groups stay, per Debian convention.
 
-Scripts tolerate hosts where systemd is not running (containers, chroots): systemd calls are skipped when `/run/systemd/system` is absent.
+As in `dh_installsystemd` output, a failure to start the service does not fail the dpkg transaction.
+
+Scripts tolerate hosts where systemd is not running (containers, chroots): `systemctl` and service start/stop calls are skipped when `/run/systemd/system` is absent.
 
 ### Workflow (`.github/workflows/build.yml`)
 
@@ -173,7 +180,7 @@ Workflow-level permissions are `contents: read`; only `release` gets `contents: 
 | Unknown architecture argument | `build.sh` exits non-zero with usage |
 | Tag does not match `versions.env` | `release` job fails; nothing is published |
 | Smoke test failure | `build` job fails; `release` does not run |
-| Service fails to start in postinstall | Script exits non-zero, `dpkg` reports the package as half-configured |
+| Service fails to start in postinstall | Install completes (Debian convention); the smoke test's `is-active` check catches it in CI |
 
 ## Testing
 
