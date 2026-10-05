@@ -2,40 +2,42 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build a `node-exporter` Debian package for amd64 and arm64 from the upstream node_exporter release binary with nFPM, in GitHub Actions, and publish it to a GitHub Release when a version tag is pushed.
+**Goal:** Build a `node-exporter` Debian package for amd64 and arm64 from the upstream node_exporter release binary with nFPM, entirely in containers, and publish it to GitHub Releases: a final release on a version tag, a pre-release on a manual workflow run.
 
-**Architecture:** `versions.env` pins the upstream version, package revision and tarball hashes. `build.sh <arch>` downloads and verifies the tarball, then runs nFPM against one `nfpm.yaml`. `test/smoke.sh` installs the result on a systemd host and verifies it end to end. A GitHub Actions workflow runs build and smoke test per architecture on native runners and, on a tag, publishes the Release.
+**Architecture:** `versions.env` pins the upstream version, package revision and tarball hashes. A three-stage `Containerfile` builds the package (`build`), exposes it for export (`package`) and boots a systemd Debian container that installs it and runs a short smoke script (`test`). Three container commands are the whole harness, the same locally and in GitHub Actions.
 
-**Tech Stack:** nFPM 2.47.0, bash, POSIX sh (maintainer scripts), systemd (`sysusers.d`, `tmpfiles.d`, `deb-systemd-helper`), GitHub Actions.
+**Tech Stack:** nFPM 2.47.0 (from its official image), Docker or Podman, Debian 13 slim, bash (build script), POSIX sh (maintainer scripts, smoke script), systemd (`sysusers.d`, `tmpfiles.d`, `deb-systemd-helper`), GitHub Actions.
 
 **Spec:** `docs/superpowers/specs/2026-10-05-nfpm-pipeline-design.md`
 
 ## Global Constraints
 
-- Work only in the worktree `.worktrees/feature/nfpm-pipeline` (branch `feature/nfpm-pipeline`). Never write in the main checkout.
+- Work only in the worktree `.worktrees/feature/nfpm-pipeline` (branch `feature/nfpm-pipeline`). The shell's working directory can reset to the main checkout between commands, so run every command from the worktree explicitly and never write in the main checkout.
+- Nothing may be required on the host except a container engine. No host-side wrapper scripts.
 - Package name `node-exporter`; service `node-exporter.service`; binary `/usr/bin/node-exporter`.
 - Architectures: `amd64`, `arm64` only.
 - Upstream node_exporter `1.12.1`, package revision `1`, Debian version `1.12.1-1`.
-- nFPM `2.47.0`, installed from the release tarball and verified by SHA256.
+- nFPM `2.47.0` from `ghcr.io/goreleaser/nfpm`, pinned by tag and digest.
+- Maintainer: `Ilya Vassyutovich <me@iv.link>`.
 - Textfile directories: `/var/lib/node-exporter/textfile-collector` and `/run/node-exporter/textfile-collector`, both `root:node-exporter-textfile-writers`, mode `2775`.
-- Config file `/etc/default/node-exporter` is a conffile (`config|noreplace`).
 - Every `contents` entry in `nfpm.yaml` sets owner, group and mode explicitly.
 - All files use LF line endings. Shell scripts indent with 4 spaces, YAML with 2.
 - Comments explain why, never what.
-- Never delete with `rm`; move to `.<name>.<timestamp>.bak` instead. (`rm` inside the shipped scripts, acting on build or package state, is fine.)
-- Commits: new commits only, no `--amend`, no `Co-authored-by` trailer.
-- Do not run tests, push, open a PR or create a tag without asking the user first. Steps that do so are marked **(ask first)**.
+- Test scope is one minimal smoke scenario by decision. Do not add tests beyond it.
+- Commits: new commits only, no `--amend`, no `Co-authored-by` trailer. Commits are GPG-signed; a commit that hangs is waiting for a passphrase prompt on the user's screen.
+- Pushing the feature branch, opening a PR, running the local container harness and checking Actions are fine without asking. Merging to `master` and pushing a release tag are the user's call.
 - Third-party GitHub Actions are pinned by commit SHA.
+- When running `podman`/`docker` from Git Bash on Windows with a container-side absolute path as an argument, prefix the command with `MSYS_NO_PATHCONV=1`, or Git Bash rewrites the path.
 
 ## Review Focus
 
-Conditions the spec implies but does not list as tests. Each is pinned by a step in `test/smoke.sh` (Task 2).
+The spec deliberately limits testing to one smoke scenario, so the conditions below have no test and none should be added. They are the places where a reviewer reading the code is the only check, most likely to bite first:
 
-1. `ARGS` holding several whitespace-separated flags: every flag must take effect, not only the first. (Smoke step 7.)
-2. A user outside `node-exporter-textfile-writers` must not be able to write either textfile directory; a member must, and the service must be able to read what the member wrote. (Smoke step 6.)
-3. After a reboot `/run` is empty: the volatile directory must come back from the installed `tmpfiles.d` entry without the package being reconfigured. (Smoke step 5.)
-4. An admin who disabled the service: an upgrade must not re-enable or start it. (Smoke step 8.)
-5. `dpkg --remove` (not purge) followed by a reinstall: the service must come back enabled and running with the kept config. (Smoke step 9.)
+1. `ARGS` in `/etc/default/node-exporter` with several whitespace-separated flags: the unit must pass `$ARGS` unquoted and unbraced so systemd splits it.
+2. A pre-release must sort below its final release: the suffix must be joined to the revision with `~`, and nowhere with `-` or `+`.
+3. The two textfile directories must be group-writable and setgid (`2775`) for the writers group and not world-writable.
+4. Maintainer scripts must not fail on a host without a running systemd: every `systemctl` and `deb-systemd-invoke` call sits behind the `/run/systemd/system` check.
+5. The `release` job must be unable to publish a final release from anything but a pushed tag that matches `versions.env`.
 
 ## File Structure
 
@@ -43,9 +45,11 @@ Conditions the spec implies but does not list as tests. Each is pinned by a step
 |---|---|
 | `.gitattributes` | Force LF so scripts work when checked out on Windows |
 | `.editorconfig` | Indentation for shell and YAML |
-| `.gitignore` | Ignore `dist/`, `.worktrees/`, `.*.bak` |
+| `.gitignore` | Ignore `dist/`, `.worktrees/` |
+| `.dockerignore` | Keep the build context to what the build reads |
 | `versions.env` | The only place versions and hashes are pinned |
-| `build.sh` | Download, verify, extract, invoke nFPM |
+| `Containerfile` | The `build`, `package` and `test` stages |
+| `build.sh` | Download, verify, extract, invoke nFPM (inside `build`) |
 | `nfpm.yaml` | Package metadata and file mapping |
 | `packaging/node-exporter.service` | systemd unit |
 | `packaging/node-exporter.default` | Default `/etc/default/node-exporter` |
@@ -54,29 +58,30 @@ Conditions the spec implies but does not list as tests. Each is pinned by a step
 | `packaging/scripts/postinstall.sh` | Create users and directories, enable, start or restart |
 | `packaging/scripts/preremove.sh` | Stop on removal |
 | `packaging/scripts/postremove.sh` | Mask on removal, clean up on purge |
-| `test/smoke.sh` | End-to-end install test |
-| `test/build-rejects.sh` | `build.sh` refuses bad input |
-| `.github/workflows/build.yml` | CI build, test and release |
+| `test/smoke.sh` | The smoke scenario (inside `test`) |
+| `test/smoke.service` | Runs the scenario at boot; its result is the container's exit code |
+| `.github/workflows/build.yml` | CI build, test, release and pre-release |
 | `README.md`, `ROADMAP.md` | Usage, release procedure, future ideas |
+| `CLAUDE.md` | Why the repo is built this way |
 
 ---
 
-### Task 1: Repository hygiene and v1 retirement
+### Task 1: Repository hygiene and v1 removal
 
 **Files:**
-- Create: `.gitattributes`
+- Create: `.gitattributes`, `.dockerignore`
 - Modify: `.editorconfig`, `.gitignore`
-- Retire: `make-deb.ps1`, `deb/`
+- Delete: `make-deb.ps1`, `deb/`
 
 **Interfaces:**
 - Consumes: nothing.
-- Produces: LF checkout for all later files; `.*.bak` ignored.
+- Produces: LF checkout for all later files; a build context without `.git`, `dist/`, `docs/`.
 
 - [ ] **Step 1: Create `.gitattributes`**
 
 ```gitattributes
-# Maintainer scripts and build scripts run on Linux; a CRLF checkout on
-# Windows would put "\r" into shebangs and break them.
+# Everything here ends up running on Linux; a CRLF checkout on Windows would
+# put "\r" into shell scripts and unit files and break them.
 * text=auto eol=lf
 ```
 
@@ -103,244 +108,50 @@ indent_size = 2
 ```gitignore
 dist/
 .worktrees/
-.*.bak
 ```
 
-- [ ] **Step 4: Retire the v1 files**
+- [ ] **Step 4: Create `.dockerignore`**
+
+Podman reads this file too.
+
+```
+.git
+.github
+.worktrees
+dist
+docs
+*.md
+```
+
+- [ ] **Step 5: Remove the v1 files**
+
+They are fully in git history, so a plain removal is safe.
 
 ```bash
-TS=$(date +%Y%m%d%H%M%S)
-mv make-deb.ps1 ".make-deb.ps1.$TS.bak"
-mv deb ".deb.$TS.bak"
+git rm -r --quiet make-deb.ps1 deb
 ```
 
-- [ ] **Step 5: Verify**
+- [ ] **Step 6: Verify**
 
 Run: `git add -A && git add --renormalize . && git status --short`
-Expected: `A .gitattributes`, `M .editorconfig`, `M .gitignore`, `D` for `make-deb.ps1` and every file under `deb/`. No `.bak` entries listed.
+Expected: `A` for `.gitattributes` and `.dockerignore`, `M` for `.editorconfig` and `.gitignore`, `D` for `make-deb.ps1` and every file under `deb/`.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
-git commit -m "Retire v1 packaging and enforce LF line endings"
+git commit -m "Remove v1 packaging and enforce LF line endings"
 ```
 
 ---
 
-### Task 2: End-to-end tests (written first, expected to fail)
-
-**Files:**
-- Create: `test/smoke.sh`, `test/build-rejects.sh`
-
-**Interfaces:**
-- Consumes (from later tasks): `versions.env` defining `NODE_EXPORTER_VERSION` and `PACKAGE_REVISION`; `./build.sh <arch>`; `VERSIONS_FILE` override; `dist/staging/upstream/` as the extraction directory.
-- Produces: `test/smoke.sh <path-to-deb>` (root, systemd host, exit 0 on success); `test/build-rejects.sh` (no arguments, exit 0 on success).
-
-- [ ] **Step 1: Create `test/smoke.sh`**
-
-```bash
-#!/usr/bin/env bash
-# Destructive: installs, reconfigures and purges node-exporter on this host.
-# Run it only on a disposable systemd machine (CI runner, throw-away VM).
-set -euo pipefail
-
-[ $# -eq 1 ] || { echo "usage: $0 <path-to-deb>" >&2; exit 2; }
-[ "$(id -u)" -eq 0 ] || { echo "must run as root" >&2; exit 2; }
-DEB=$(realpath "$1")
-
-cd "$(dirname "$0")/.."
-# shellcheck source=versions.env
-. ./versions.env
-
-SERVICE=node-exporter.service
-WRITERS=node-exporter-textfile-writers
-PERSISTENT_DIR=/var/lib/node-exporter/textfile-collector
-VOLATILE_DIR=/run/node-exporter/textfile-collector
-CONFIG=/etc/default/node-exporter
-DEFAULT_URL=http://localhost:9100/metrics
-MOVED_URL=http://127.0.0.1:9101/metrics
-METRICS=""
-
-step() { printf '\n==> %s\n' "$*"; }
-fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
-
-diagnostics() {
-    status=$?
-    if [ "$status" -ne 0 ]; then
-        systemctl status "$SERVICE" --no-pager || true
-        journalctl --unit "$SERVICE" --lines 50 --no-pager || true
-    fi
-    exit "$status"
-}
-trap diagnostics EXIT
-
-# The body is captured before matching: `curl | grep -q` under pipefail
-# fails with SIGPIPE as soon as grep finds its match.
-wait_for_metrics() {
-    for _ in $(seq 1 30); do
-        if METRICS=$(curl --fail --silent "$1"); then
-            return 0
-        fi
-        sleep 0.5
-    done
-    fail "no response from $1"
-}
-has_metric() { grep -Eq "$1" <<<"$METRICS"; }
-
-step "1. Package metadata and contents"
-EXPECTED_VERSION="${NODE_EXPORTER_VERSION}-${PACKAGE_REVISION}"
-[ "$(dpkg-deb --field "$DEB" Package)" = "node-exporter" ] || fail "wrong package name"
-[ "$(dpkg-deb --field "$DEB" Version)" = "$EXPECTED_VERSION" ] || fail "wrong version"
-[ "$(dpkg-deb --field "$DEB" Architecture)" = "$(dpkg --print-architecture)" ] || fail "wrong architecture"
-CONTENTS=$(dpkg-deb --contents "$DEB")
-has_entry() { grep -Eq "^$1 root/root .* \\.?$2\$" <<<"$CONTENTS" || fail "missing or wrong mode: $2"; }
-has_entry "-rwxr-xr-x" /usr/bin/node-exporter
-has_entry "-rw-r--r--" /usr/lib/systemd/system/node-exporter.service
-has_entry "-rw-r--r--" /etc/default/node-exporter
-has_entry "-rw-r--r--" /usr/lib/sysusers.d/node-exporter.conf
-has_entry "-rw-r--r--" /usr/lib/tmpfiles.d/node-exporter.conf
-has_entry "-rw-r--r--" /usr/share/doc/node-exporter/LICENSE
-has_entry "-rw-r--r--" /usr/share/doc/node-exporter/NOTICE
-CONFFILES=$(dpkg-deb --info "$DEB" conffiles)
-grep -Fxq "$CONFIG" <<<"$CONFFILES" || fail "$CONFIG is not a conffile"
-
-step "2. Fresh install starts and enables the service"
-dpkg --install "$DEB"
-systemctl is-enabled --quiet "$SERVICE" || fail "service not enabled"
-wait_for_metrics "$DEFAULT_URL"
-systemctl is-active --quiet "$SERVICE" || fail "service not active"
-
-step "3. Runs as the dedicated user"
-getent passwd node-exporter >/dev/null || fail "user missing"
-getent group "$WRITERS" >/dev/null || fail "writers group missing"
-PID=$(systemctl show --property MainPID --value "$SERVICE")
-[ "$(stat --format %U "/proc/$PID")" = "node-exporter" ] || fail "service runs as the wrong user"
-
-step "4. Serves the pinned upstream version"
-has_metric "^node_exporter_build_info\\{.*version=\"${NODE_EXPORTER_VERSION}\"" || fail "wrong upstream version"
-has_metric '^node_scrape_collector_success\{collector="time"\} 1$' || fail "time collector not on by default"
-
-step "5. Textfile directories exist and the volatile one survives a reboot"
-EXPECTED_DIR_STAT="2775 root $WRITERS"
-[ "$(stat --format '%a %U %G' "$PERSISTENT_DIR")" = "$EXPECTED_DIR_STAT" ] || fail "persistent dir has wrong mode or owner"
-[ "$(stat --format '%a %U %G' "$VOLATILE_DIR")" = "$EXPECTED_DIR_STAT" ] || fail "volatile dir has wrong mode or owner"
-# A reboot empties /run and then runs systemd-tmpfiles with no file argument,
-# reading the standard directories. Doing the same here proves the entry is
-# installed where boot will find it.
-mv /run/node-exporter "/run/.node-exporter.$$.bak"
-systemd-tmpfiles --create --prefix=/run/node-exporter
-[ "$(stat --format '%a %U %G' "$VOLATILE_DIR")" = "$EXPECTED_DIR_STAT" ] || fail "volatile dir not recreated by tmpfiles.d"
-
-step "6. Only group members can publish, and the service reads what they publish"
-if runuser --user nobody -- touch "$PERSISTENT_DIR/intruder.prom" 2>/dev/null; then
-    fail "non-member could write the persistent dir"
-fi
-if runuser --user nobody -- touch "$VOLATILE_DIR/intruder.prom" 2>/dev/null; then
-    fail "non-member could write the volatile dir"
-fi
-runuser --user nobody --group "$WRITERS" -- sh -c "echo 'smoke_persistent 1' >'$PERSISTENT_DIR/smoke.prom'"
-runuser --user nobody --group "$WRITERS" -- sh -c "echo 'smoke_volatile 1' >'$VOLATILE_DIR/smoke.prom'"
-wait_for_metrics "$DEFAULT_URL"
-has_metric '^smoke_persistent 1$' || fail "persistent textfile metric not served"
-has_metric '^smoke_volatile 1$' || fail "volatile textfile metric not served"
-has_metric '^node_textfile_scrape_error 0$' || fail "textfile collector reports an error"
-
-step "7. Config edits survive a reinstall and every flag in ARGS applies"
-echo 'ARGS="--web.listen-address=127.0.0.1:9101 --no-collector.time"' >"$CONFIG"
-EDITED=$(cat "$CONFIG")
-dpkg --install "$DEB"
-[ "$(cat "$CONFIG")" = "$EDITED" ] || fail "reinstall overwrote $CONFIG"
-wait_for_metrics "$MOVED_URL"
-if has_metric '^node_scrape_collector_success\{collector="time"\}'; then
-    fail "second flag in ARGS was ignored"
-fi
-has_metric '^smoke_persistent 1$' || fail "packaged textfile flags lost when ARGS is set"
-
-step "8. A service the admin disabled stays disabled across an upgrade"
-systemctl disable --now "$SERVICE"
-dpkg --install "$DEB"
-if systemctl is-enabled --quiet "$SERVICE"; then fail "upgrade re-enabled a disabled service"; fi
-if systemctl is-active --quiet "$SERVICE"; then fail "upgrade started a disabled service"; fi
-systemctl enable --now "$SERVICE"
-wait_for_metrics "$MOVED_URL"
-
-step "9. Remove keeps config; reinstall comes back enabled and running"
-dpkg --remove node-exporter
-if systemctl is-active --quiet "$SERVICE"; then fail "service still running after remove"; fi
-[ "$(cat "$CONFIG")" = "$EDITED" ] || fail "remove deleted $CONFIG"
-dpkg --install "$DEB"
-systemctl is-enabled --quiet "$SERVICE" || fail "service not enabled after reinstall"
-wait_for_metrics "$MOVED_URL"
-
-step "10. Purge cleans up"
-dpkg --purge node-exporter
-[ ! -e /usr/lib/systemd/system/node-exporter.service ] || fail "unit file left behind"
-[ ! -L /etc/systemd/system/multi-user.target.wants/node-exporter.service ] || fail "enablement symlink left behind"
-[ ! -L /etc/systemd/system/node-exporter.service ] || fail "mask left behind"
-[ ! -e "$CONFIG" ] || fail "$CONFIG left behind"
-[ ! -e /var/lib/node-exporter ] || fail "/var/lib/node-exporter left behind"
-[ ! -e /run/node-exporter ] || fail "/run/node-exporter left behind"
-getent passwd node-exporter >/dev/null || fail "system user was removed (Debian convention keeps it)"
-
-printf '\nAll smoke checks passed.\n'
-```
-
-- [ ] **Step 2: Create `test/build-rejects.sh`**
-
-```bash
-#!/usr/bin/env bash
-set -euo pipefail
-
-cd "$(dirname "$0")/.."
-
-fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
-
-if ./build.sh 2>/dev/null; then fail "accepted a missing architecture"; fi
-if ./build.sh mips 2>/dev/null; then fail "accepted an unknown architecture"; fi
-
-TAMPERED=$(mktemp)
-trap 'rm -f "$TAMPERED"' EXIT
-ZEROS=0000000000000000000000000000000000000000000000000000000000000000
-sed -E "s/^(NODE_EXPORTER_SHA256_[A-Z0-9]+)=.*/\\1=${ZEROS}/" versions.env >"$TAMPERED"
-if VERSIONS_FILE="$TAMPERED" ./build.sh amd64 2>/dev/null; then
-    fail "accepted a tarball with the wrong hash"
-fi
-# build.sh recreates dist/staging on every run and extracts only after the
-# hash check, so this directory existing means unverified bytes were unpacked.
-[ ! -e dist/staging/upstream ] || fail "extracted a tarball that failed verification"
-
-echo "build.sh rejects bad input."
-```
-
-- [ ] **Step 3: Check syntax**
-
-Run: `bash -n test/smoke.sh && bash -n test/build-rejects.sh && echo ok`
-Expected: `ok`
-
-- [ ] **Step 4: Confirm the test fails for the right reason (ask first)**
-
-Run: `bash test/build-rejects.sh`
-Expected: non-zero exit with `sed: can't read versions.env: No such file or directory`, because neither `versions.env` nor `build.sh` exists yet. (The two architecture checks pass vacuously at this point: a missing `build.sh` also exits non-zero.) `test/smoke.sh` cannot run until a `.deb` exists; it first runs in Task 5.
-
-- [ ] **Step 5: Commit**
-
-Git on Windows does not record the executable bit from the filesystem, so set it in the index.
-
-```bash
-git add --chmod=+x test/smoke.sh test/build-rejects.sh
-git commit -m "Add end-to-end tests for the package and the build script"
-```
-
----
-
-### Task 3: Package payload
+### Task 2: Package payload
 
 **Files:**
 - Create: `packaging/node-exporter.service`, `packaging/node-exporter.default`, `packaging/node-exporter.sysusers`, `packaging/node-exporter.tmpfiles`, `packaging/scripts/postinstall.sh`, `packaging/scripts/preremove.sh`, `packaging/scripts/postremove.sh`
 
 **Interfaces:**
 - Consumes: nothing.
-- Produces: the seven files above at exactly these paths, referenced by `nfpm.yaml` in Task 4. Installed names: `/usr/lib/systemd/system/node-exporter.service`, `/etc/default/node-exporter`, `/usr/lib/sysusers.d/node-exporter.conf`, `/usr/lib/tmpfiles.d/node-exporter.conf`.
+- Produces: the seven files above at exactly these paths, referenced by `nfpm.yaml` in Task 3. Installed names: `/usr/lib/systemd/system/node-exporter.service`, `/etc/default/node-exporter`, `/usr/lib/sysusers.d/node-exporter.conf`, `/usr/lib/tmpfiles.d/node-exporter.conf`.
 
 - [ ] **Step 1: Create `packaging/node-exporter.service`**
 
@@ -496,17 +307,18 @@ git commit -m "Add package payload: unit, defaults, sysusers, tmpfiles, maintain
 
 ---
 
-### Task 4: Version pins, nFPM config and build script
+### Task 3: Containerised build
 
 **Files:**
-- Create: `versions.env`, `nfpm.yaml`, `build.sh`
+- Create: `versions.env`, `nfpm.yaml`, `build.sh`, `Containerfile` (stages `nfpm`, `build`, `package`)
 
 **Interfaces:**
-- Consumes: the `packaging/` files from Task 3.
+- Consumes: the `packaging/` files from Task 2.
 - Produces:
   - `versions.env` with `NODE_EXPORTER_VERSION`, `PACKAGE_REVISION`, `NODE_EXPORTER_SHA256_AMD64`, `NODE_EXPORTER_SHA256_ARM64`.
-  - `./build.sh <amd64|arm64>` writing `dist/node-exporter_<version>-<revision>_<arch>.deb`; exit 2 on bad usage; non-zero on any failure; honours `VERSIONS_FILE`.
-  - `nfpm.yaml` reading `PACKAGE_ARCH`, `PACKAGE_VERSION`, `PACKAGE_REVISION` from the environment and upstream files from `dist/staging/upstream/`.
+  - Containerfile stage `package` whose root holds exactly one `node-exporter_<version>-<revision>_<arch>.deb`.
+  - Build argument `PRERELEASE` (default empty); when set, the Debian revision becomes `<revision>~<PRERELEASE>`.
+  - Harness command: `<engine> build --target package --output dist .`
 
 - [ ] **Step 1: Create `versions.env`**
 
@@ -532,7 +344,7 @@ version: ${PACKAGE_VERSION}
 release: ${PACKAGE_REVISION}
 section: net
 priority: optional
-maintainer: Ilya Vassyutovich <IlyaVassyutovich@users.noreply.github.com>
+maintainer: Ilya Vassyutovich <me@iv.link>
 description: |
   Prometheus exporter for machine metrics
   Upstream node_exporter release binary, repackaged with a systemd unit,
@@ -547,8 +359,9 @@ conflicts:
   # Debian's own package listens on the same port.
   - prometheus-node-exporter
 
-# Modes and owners are spelled out on every entry because a build on Windows
-# has no meaningful file modes to inherit.
+# Modes and owners are spelled out on every entry so the package never
+# inherits whatever modes the build context happened to have; a checkout on
+# Windows has none worth trusting.
 contents:
   - src: dist/staging/upstream/node_exporter
     dst: /usr/bin/node-exporter
@@ -615,9 +428,7 @@ usage() {
 ARCH=$1
 
 cd "$(dirname "$0")"
-# VERSIONS_FILE exists so the hash check can be exercised with a tampered copy.
-# shellcheck source=versions.env
-. "${VERSIONS_FILE:-./versions.env}"
+. ./versions.env
 
 case "$ARCH" in
     amd64) EXPECTED_SHA256=$NODE_EXPORTER_SHA256_AMD64 ;;
@@ -625,19 +436,12 @@ case "$ARCH" in
     *) usage ;;
 esac
 
-for tool in nfpm curl tar sha256sum; do
-    command -v "$tool" >/dev/null || { echo "missing required tool: $tool" >&2; exit 1; }
-done
-
 TARBALL_NAME="node_exporter-${NODE_EXPORTER_VERSION}.linux-${ARCH}.tar.gz"
 URL="https://github.com/prometheus/node_exporter/releases/download/v${NODE_EXPORTER_VERSION}/${TARBALL_NAME}"
 STAGING=dist/staging
 TARBALL="$STAGING/upstream.tar.gz"
 
-# Recreated on every run so one architecture's binary can never end up in
-# another architecture's package.
-rm -rf "$STAGING"
-mkdir -p "$STAGING"
+mkdir -p "$STAGING/upstream"
 
 curl --fail --silent --show-error --location --output "$TARBALL" "$URL"
 echo "Downloaded $TARBALL_NAME"
@@ -645,36 +449,183 @@ echo "Downloaded $TARBALL_NAME"
 echo "${EXPECTED_SHA256}  ${TARBALL}" | sha256sum --check --strict --quiet
 echo "Verified SHA256"
 
-mkdir "$STAGING/upstream"
 tar --extract --gzip --file "$TARBALL" --directory "$STAGING/upstream" --strip-components 1
 
 export PACKAGE_ARCH=$ARCH
 export PACKAGE_VERSION=$NODE_EXPORTER_VERSION
-export PACKAGE_REVISION
+# "~" sorts before everything in Debian version ordering, even the end of
+# the string, so a pre-release is always older than the release it precedes.
+export PACKAGE_REVISION="${PACKAGE_REVISION}${PRERELEASE:+~${PRERELEASE}}"
 nfpm package --config nfpm.yaml --packager deb --target dist/
 ```
 
-- [ ] **Step 4: Check syntax**
+- [ ] **Step 4: Create `Containerfile`**
 
-Run: `bash -n build.sh && echo ok`
-Expected: `ok`
+```dockerfile
+# nFPM's own image is the pinned source of the binary. The digest is the
+# multi-architecture index, so it resolves on amd64 and arm64 alike.
+FROM --platform=$BUILDPLATFORM ghcr.io/goreleaser/nfpm:v2.47.0@sha256:74f890d72b1198cab1535b1d73edac3edb91fd6a63c63014d0dac5c766ab6211 AS nfpm
 
-- [ ] **Step 5: Run the rejection test (ask first)**
+# Packaging only downloads and repacks, so this stage runs on the build
+# machine's own platform and takes the target architecture as a plain value.
+# An arm64 package can be built on amd64 without emulation.
+FROM --platform=$BUILDPLATFORM debian:13-slim AS build
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends ca-certificates curl \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=nfpm /usr/bin/nfpm /usr/bin/nfpm
+WORKDIR /src
+COPY versions.env nfpm.yaml build.sh ./
+COPY packaging/ packaging/
+ARG TARGETARCH
+ARG PRERELEASE=""
+# Invoked through bash so the result does not depend on the executable bit,
+# which a Windows checkout does not carry into the build context.
+RUN PRERELEASE="$PRERELEASE" bash build.sh "$TARGETARCH"
 
-Run: `bash test/build-rejects.sh`
-Expected: `build.sh rejects bad input.` Without `nfpm` on `PATH` (the case on this machine) the tampered-hash run stops at the tool check before downloading anything, so the hash check itself is not exercised locally; only the two architecture checks are. The hash check is exercised for real in CI (Task 5), where nFPM is installed.
+# Nothing but the package, so `--output` exports exactly one file.
+FROM scratch AS package
+COPY --from=build /src/dist/*.deb /
+```
 
-- [ ] **Step 6: Optional local build (ask first)**
+- [ ] **Step 5: Confirm the nFPM digest is the multi-arch index**
 
-nFPM is not installed on this machine. If the user wants a local build: `go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.47.0`, then run `bash build.sh amd64`.
-Expected: `dist/node-exporter_1.12.1-1_amd64.deb` exists. If nFPM reports that `${PACKAGE_ARCH}` or `${PACKAGE_REVISION}` was not expanded, stop and report it; the fix is to pass those values some other way, and that is a design change.
+Run: `podman manifest inspect ghcr.io/goreleaser/nfpm:v2.47.0@sha256:74f890d72b1198cab1535b1d73edac3edb91fd6a63c63014d0dac5c766ab6211`
+Expected: an image index whose `manifests` list includes `linux/amd64` and `linux/arm64`. If the command reports a single-platform manifest instead, replace the digest in `Containerfile` with the index digest printed by `podman manifest inspect ghcr.io/goreleaser/nfpm:v2.47.0 --verbose` (or `docker buildx imagetools inspect ghcr.io/goreleaser/nfpm:v2.47.0`).
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 6: Build the package**
+
+Run: `podman build --target package --output dist .`
+Expected: exit 0, log lines `Downloaded node_exporter-1.12.1.linux-amd64.tar.gz` and `Verified SHA256`, and `ls dist` shows `node-exporter_1.12.1-1_amd64.deb`.
+
+- [ ] **Step 7: Build a pre-release variant and the other architecture**
+
+Run: `podman build --platform linux/arm64 --build-arg PRERELEASE=pre7.abc1234 --target package --output dist .`
+Expected: `ls dist` additionally shows `node-exporter_1.12.1-1~pre7.abc1234_arm64.deb`. This proves the architecture is taken from the target platform, that the arm64 hash is right, and that nFPM accepts the pre-release revision.
+
+- [ ] **Step 8: Commit**
 
 ```bash
-git add versions.env nfpm.yaml
-git add --chmod=+x build.sh
-git commit -m "Add pinned versions, nFPM config and build script"
+git add versions.env nfpm.yaml build.sh Containerfile
+git commit -m "Add containerised nFPM build with pinned versions"
+```
+
+---
+
+### Task 4: Smoke test stage
+
+**Files:**
+- Create: `test/smoke.sh`, `test/smoke.service`
+- Modify: `Containerfile` (append the `test` stage)
+
+**Interfaces:**
+- Consumes: Containerfile stage `package`; `versions.env` (`NODE_EXPORTER_VERSION`).
+- Produces: harness commands `<engine> build --target test --tag node-exporter-smoke .` and `<engine> run --rm --tty --privileged node-exporter-smoke`; the run exits 0 and prints `SMOKE PASS` on success, exits non-zero and prints `SMOKE FAIL: <reason>` otherwise.
+
+- [ ] **Step 1: Create `test/smoke.sh`**
+
+```sh
+#!/bin/sh
+set -eu
+
+fail() {
+    echo "SMOKE FAIL: $*"
+    exit 1
+}
+
+# Installed on the running system rather than while building the image,
+# because that is the path a real host takes: postinstall has to create the
+# user and directories and start the service itself.
+dpkg --install /smoke/*.deb
+
+systemctl is-enabled --quiet node-exporter.service || fail "service is not enabled"
+
+echo 'smoke_persistent 1' >/var/lib/node-exporter/textfile-collector/smoke.prom
+echo 'smoke_volatile 1' >/run/node-exporter/textfile-collector/smoke.prom
+
+# The listener needs a moment after the unit has been started.
+metrics=$(curl --fail --silent --show-error \
+    --retry 10 --retry-delay 1 --retry-connrefused \
+    http://localhost:9100/metrics) || fail "no answer on port 9100"
+
+serves() { printf '%s\n' "$metrics" | grep -q "$1"; }
+
+serves "^node_exporter_build_info{.*version=\"${NODE_EXPORTER_VERSION}\"" \
+    || fail "exporter does not report version ${NODE_EXPORTER_VERSION}"
+serves '^smoke_persistent 1$' || fail "metric from the persistent textfile directory is not served"
+serves '^smoke_volatile 1$' || fail "metric from the volatile textfile directory is not served"
+
+echo "SMOKE PASS: node-exporter ${NODE_EXPORTER_VERSION} installs, runs and reads both textfile directories"
+```
+
+- [ ] **Step 2: Create `test/smoke.service`**
+
+```ini
+[Unit]
+Description=node-exporter package smoke test
+# The container exists only to run this unit, so the unit's result becomes
+# the container's exit code.
+SuccessAction=exit
+FailureAction=exit
+
+[Service]
+Type=oneshot
+EnvironmentFile=/smoke/versions.env
+ExecStart=/bin/sh /smoke/smoke.sh
+# The journal dies with the container; the console is what `run` shows.
+StandardOutput=journal+console
+StandardError=journal+console
+# A hang must end the container with a failure instead of blocking CI.
+TimeoutStartSec=120
+
+[Install]
+WantedBy=multi-user.target
+```
+
+- [ ] **Step 3: Append the `test` stage to `Containerfile`**
+
+```dockerfile
+
+FROM debian:13-slim AS test
+# Debian's container images ship a policy-rc.d that forbids starting
+# services during package installation. A real host has none, and the smoke
+# test is about what happens on a real host.
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends systemd init-system-helpers curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && rm -f /usr/sbin/policy-rc.d
+COPY --from=package / /smoke/
+COPY versions.env test/smoke.sh /smoke/
+COPY test/smoke.service /etc/systemd/system/smoke.service
+RUN systemctl enable smoke.service
+# Boot status lines would bury the test's own output.
+CMD ["/usr/lib/systemd/systemd", "--show-status=false"]
+```
+
+- [ ] **Step 4: Run the harness**
+
+Run:
+```bash
+podman build --target test --tag node-exporter-smoke .
+podman run --rm --tty --privileged node-exporter-smoke; echo "exit=$?"
+```
+Expected: the output contains `SMOKE PASS: node-exporter 1.12.1 installs, runs and reads both textfile directories` and ends with `exit=0`. `--tty` is required: without a terminal systemd writes nothing to the container's output. Some unrelated systemd log lines (failed kernel-module loading, `sys-kernel-config.mount`) are normal in a container.
+
+- [ ] **Step 5: Fix what the smoke test finds**
+
+This is the first time the package is installed anywhere, so a `SMOKE FAIL` here is the test doing its job. Find the root cause in the owning file (unit, maintainer script, tmpfiles, `nfpm.yaml`), fix it there, and rerun Step 4. For more detail, start the same image with a shell instead of the default command and inspect it by hand:
+
+```bash
+MSYS_NO_PATHCONV=1 podman run --rm --interactive --tty --privileged node-exporter-smoke /bin/bash
+```
+
+Do not weaken a check to get a pass. If a check turns out to describe wrong behaviour, stop and raise it with the user.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add Containerfile test
+git commit -m "Add smoke test stage that installs the package under systemd"
 ```
 
 ---
@@ -685,8 +636,8 @@ git commit -m "Add pinned versions, nFPM config and build script"
 - Create: `.github/workflows/build.yml`
 
 **Interfaces:**
-- Consumes: `./build.sh <arch>`, `test/build-rejects.sh`, `test/smoke.sh <deb>`, `versions.env`.
-- Produces: artifacts `deb-amd64` and `deb-arm64`; on a tag, a GitHub Release with both `.deb` files and `SHA256SUMS`.
+- Consumes: the three harness commands; build argument `PRERELEASE`; `versions.env`.
+- Produces: artifacts `deb-amd64` and `deb-arm64`; a GitHub Release on a matching tag; a GitHub pre-release on a manual run.
 
 - [ ] **Step 1: Create `.github/workflows/build.yml`**
 
@@ -698,12 +649,10 @@ on:
     branches: [master]
     tags: ["v*"]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
-
-env:
-  NFPM_VERSION: 2.47.0
 
 jobs:
   build:
@@ -713,44 +662,26 @@ jobs:
         include:
           - arch: amd64
             runner: ubuntu-latest
-            nfpm_asset: Linux_x86_64
-            nfpm_sha256: 0660ca602b2d2d2ae4781a06c692b3eeb9d437ffea05b831d76e41f4a3188783
           - arch: arm64
             runner: ubuntu-24.04-arm
-            nfpm_asset: Linux_arm64
-            nfpm_sha256: 1c0f5f2999b9a974bfb04fdb0cc3306096de530ac5dbb25d739cc5f5219c919c
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - name: Install nFPM
-        env:
-          NFPM_ASSET: ${{ matrix.nfpm_asset }}
-          NFPM_SHA256: ${{ matrix.nfpm_sha256 }}
-        run: |
-          archive="$RUNNER_TEMP/nfpm.tar.gz"
-          curl --fail --silent --show-error --location --output "$archive" \
-            "https://github.com/goreleaser/nfpm/releases/download/v${NFPM_VERSION}/nfpm_${NFPM_VERSION}_${NFPM_ASSET}.tar.gz"
-          echo "${NFPM_SHA256}  ${archive}" | sha256sum --check --strict
-          mkdir "$RUNNER_TEMP/nfpm"
-          tar --extract --gzip --file "$archive" --directory "$RUNNER_TEMP/nfpm" nfpm
-          echo "$RUNNER_TEMP/nfpm" >>"$GITHUB_PATH"
-
-      - name: Lint shell scripts
-        # The scripts are identical on both architectures; one pass is enough.
-        if: matrix.arch == 'amd64'
-        run: shellcheck --external-sources build.sh test/*.sh packaging/scripts/*.sh
-
-      - name: Build script rejects bad input
-        run: test/build-rejects.sh
+      - name: Derive pre-release id
+        if: github.event_name == 'workflow_dispatch'
+        run: echo "PRERELEASE=pre${GITHUB_RUN_NUMBER}.${GITHUB_SHA::7}" >>"$GITHUB_ENV"
 
       - name: Build package
-        run: ./build.sh ${{ matrix.arch }}
+        run: docker build --build-arg "PRERELEASE=${PRERELEASE:-}" --target package --output dist .
+
+      - name: Build test image
+        run: docker build --build-arg "PRERELEASE=${PRERELEASE:-}" --target test --tag node-exporter-smoke .
 
       - name: Smoke test
-        run: sudo test/smoke.sh dist/node-exporter_*_${{ matrix.arch }}.deb
+        run: docker run --rm --tty --privileged node-exporter-smoke
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -759,7 +690,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     needs: build
     runs-on: ubuntu-latest
     permissions:
@@ -769,7 +700,8 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Tag must match versions.env
+      - name: Release tag must match versions.env
+        if: github.event_name == 'push'
         run: |
           . ./versions.env
           expected="v${NODE_EXPORTER_VERSION}-${PACKAGE_REVISION}"
@@ -786,24 +718,43 @@ jobs:
 
       - name: Generate checksums
         working-directory: dist
-        run: sha256sum -- *.deb >SHA256SUMS
+        run: |
+          # GitHub rewrites "~" in asset names on upload. Renaming first keeps
+          # the names in SHA256SUMS equal to the names people download.
+          for file in *.deb; do
+            renamed=${file//\~/.}
+            if [ "$file" != "$renamed" ]; then mv -- "$file" "$renamed"; fi
+          done
+          sha256sum -- *.deb >SHA256SUMS
 
       - name: Publish release
+        if: github.event_name == 'push'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "$GITHUB_REF_NAME" dist/*.deb dist/SHA256SUMS \
             --verify-tag --title "$GITHUB_REF_NAME" --generate-notes
+
+      - name: Publish pre-release
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          . ./versions.env
+          tag="v${NODE_EXPORTER_VERSION}-${PACKAGE_REVISION}-pre${GITHUB_RUN_NUMBER}.${GITHUB_SHA::7}"
+          gh release create "$tag" dist/*.deb dist/SHA256SUMS \
+            --prerelease --target "$GITHUB_SHA" --title "$tag" \
+            --notes "Pre-release built from \`${GITHUB_REF_NAME}\` at ${GITHUB_SHA}."
 ```
 
 - [ ] **Step 2: Commit**
 
 ```bash
 git add .github/workflows/build.yml
-git commit -m "Add build, test and release workflow"
+git commit -m "Add build, test, release and pre-release workflow"
 ```
 
-- [ ] **Step 3: Push and open a draft pull request (ask first)**
+- [ ] **Step 3: Push and open a draft pull request**
 
 The workflow triggers on pull requests, so a PR is what makes CI run on this branch.
 
@@ -811,7 +762,7 @@ The workflow triggers on pull requests, so a PR is what makes CI run on this bra
 git push origin feature/nfpm-pipeline
 gh pr create --draft --base master --head feature/nfpm-pipeline \
   --title "Package node-exporter with nFPM" \
-  --body "Replaces the v1 dpkg-deb script with an nFPM pipeline. Spec: docs/superpowers/specs/2026-10-05-nfpm-pipeline-design.md"
+  --body "Replaces the v1 dpkg-deb script with a containerised nFPM pipeline. Spec: docs/superpowers/specs/2026-10-05-nfpm-pipeline-design.md"
 ```
 
 - [ ] **Step 4: Watch the run**
@@ -821,18 +772,21 @@ Expected: `build (amd64)` and `build (arm64)` pass; `release` is skipped.
 
 - [ ] **Step 5: Fix what CI finds**
 
-This is the first time `test/smoke.sh` runs, so failures here are expected and are the point of the test. Read the failing step with `gh run view --log-failed`, fix the root cause in the owning file, and commit each fix separately with a message naming the cause. Do not weaken an assertion to get green; if an assertion turns out to describe behaviour that is wrong, stop and raise it with the user. Repeat Step 4 until both jobs pass.
+The local run used Podman on amd64; CI is the first run on Docker and the first on arm64, so differences surface here. Read the failing step with `gh run view --log-failed`, fix the root cause, commit each fix separately with a message naming the cause, push, and repeat Step 4 until both jobs pass. If systemd fails to boot under Docker (the container exits at once with a cgroup error), add `--cgroupns=host` to the `docker run` line and to the README's run command, and record the reason in a workflow comment.
+
+The pre-release path cannot be exercised yet: GitHub only offers a manual run for workflows that exist on the default branch. It is first tried after the merge (Task 6, Step 5).
 
 ---
 
 ### Task 6: Documentation
 
 **Files:**
+- Create: `CLAUDE.md`
 - Modify: `README.md`, `ROADMAP.md`
 
 **Interfaces:**
 - Consumes: everything above.
-- Produces: user-facing documentation.
+- Produces: user-facing and agent-facing documentation.
 
 - [ ] **Step 1: Replace `README.md`**
 
@@ -868,25 +822,28 @@ After editing `/etc/default/node-exporter`, run `sudo systemctl restart node-exp
 
 The package conflicts with Debian's `prometheus-node-exporter`.
 
-## Build locally
+## Build and test locally
 
-Needs `nfpm`, `curl`, `tar` and `sha256sum` (Git Bash works on Windows).
+The only requirement is Docker or Podman; the commands are the same for both.
 
 ```sh
-./build.sh amd64
+podman build --target package --output dist .
+podman build --target test --tag node-exporter-smoke .
+podman run --rm --tty --privileged node-exporter-smoke
 ```
 
-The package is written to `dist/`.
+The first command writes the `.deb` to `dist/`. The last one boots a throw-away Debian container with systemd, installs the package in it and checks that the exporter runs; it prints `SMOKE PASS` and exits 0 on success.
 
-`test/smoke.sh <deb>` installs, exercises and purges the package. It is destructive, so run it only as root on a disposable machine.
+Add `--platform linux/arm64` to the first command to build the other architecture. The test runs on your machine's own architecture.
 
 ## Release
 
 1. Edit `versions.env`: set the new upstream version and both hashes with `PACKAGE_REVISION=1`, or raise `PACKAGE_REVISION` for a packaging-only change.
-2. Merge to `master` and wait for a green build.
-3. Tag the merge commit `v<version>-<revision>`, for example `v1.12.1-1`, and push the tag.
+2. Optional: run the `build` workflow by hand on your branch (Actions tab, or `gh workflow run build --ref <branch>`). It publishes a pre-release you can try on a host; its version sorts below the final one, so the final release installs over it as a normal upgrade.
+3. Merge to `master` and wait for a green build.
+4. Tag the merge commit `v<version>-<revision>`, for example `v1.12.1-1`, and push the tag.
 
-The workflow refuses to publish if the tag does not match `versions.env`.
+The workflow refuses to publish a release if the tag does not match `versions.env`. Pre-releases are not cleaned up automatically.
 
 ![wzrd](https://wzrd.iv.link)
 ````
@@ -896,17 +853,73 @@ The workflow refuses to publish if the tag does not match `versions.env`.
 ```markdown
 - [ ] Publish a signed apt repository so hosts update through `apt upgrade`
 - [ ] Track upstream node_exporter releases automatically
+- [ ] Clean up old pre-releases automatically
 - [ ] Build for armhf
 ```
 
-- [ ] **Step 3: Commit and push (ask first before pushing)**
+- [ ] **Step 3: Create `CLAUDE.md`**
+
+```markdown
+# Why this repo is the way it is
+
+This repo repackages the upstream Prometheus node_exporter release binary as a Debian package. It has one consumer, its owner, but it is public. It contains no application code: its whole value is in a small number of packaging decisions. This file records the reasons for them. How things work is the code's job; if the code cannot explain itself, fix the code rather than documenting it here.
+
+## Principles
+
+**Repackage, never rebuild.** The binary is upstream's own release artifact. Compiling it here would add a toolchain to maintain and would make the package differ from what upstream tested.
+
+**Pin and verify everything that is downloaded.** The upstream version and its checksums are committed, and the build fails on a mismatch. The checksums come from a commit a human reviewed, not from the place the tarball is downloaded from, so a tampered upstream release cannot slip through. The same reasoning is why build tools and CI actions are pinned by digest or commit rather than by a moving tag.
+
+**All versions live in one place.** A version bump should be a one-file change that is easy to review.
+
+**Containers are the only build environment.** A developer machine is assumed to have Docker or Podman and nothing else: no particular shell, no Debian tooling, no nFPM. Local runs and CI execute the same container build, so there is one code path and "works on my machine" cannot diverge from CI. This is also why there are no host-side wrapper scripts.
+
+**Follow Debian conventions instead of inventing.** Standard paths, declarative user and directory creation, and the same service-handling snippets Debian's own tooling generates. A host admin should find nothing surprising. When in doubt, do what a package from the Debian archive would do.
+
+**Keep the package's name and identity distinct from Debian's own node exporter package.** They would fight over the same port, so the two are declared as conflicting rather than made interchangeable. Mirroring Debian's name would let an ordinary `apt upgrade` silently replace this package.
+
+## Decisions that look odd without context
+
+**Two textfile directories.** One persists across reboots and one does not. Rare jobs (a nightly backup) want their last result to survive a reboot; other metrics must not be reported stale after one. Both are provisioned and read by default so a host needs no extra setup. Writing is restricted to a dedicated group so that publishing metrics does not require running as the exporter or as root.
+
+**The service has almost no sandboxing.** The exporter's job is to observe the whole host. The usual systemd hardening options hide exactly the things it measures.
+
+**The service cannot be reloaded.** The exporter has no reload handler; a reload signal would terminate it in a way systemd regards as a clean stop and does not restart.
+
+**The service user is never deleted.** Files it or the writers group own may outlive the package, and reusing system account IDs is discouraged in Debian.
+
+**A failed service start does not fail the package installation.** This is the Debian norm: a half-configured package is harder to recover from than a stopped service. The smoke test exists to catch this case before a release.
+
+**Pre-release versions use `~`.** In Debian version ordering it sorts before everything, so every pre-release is older than the release it leads to and the final package installs over it as a normal upgrade. Never join a pre-release suffix with anything else.
+
+## Testing
+
+There is one smoke test, and that is deliberate. It answers a single question: does this package give a working exporter on a fresh host? It installs the package into a booted systemd container the way a real host would.
+
+Do not grow it into a lifecycle suite. Upgrade, removal, purge and config-preservation behaviour belong to dpkg and systemd tooling; testing them here would mostly test those tools, and the test code would outweigh the thing under test. Add a check only for behaviour this repo itself implements and that has actually broken.
+
+## Releasing
+
+A final release is cut by a human pushing a tag, and CI refuses to publish if the tag disagrees with the pinned versions: the tag is a statement of intent, the pinned file is the truth, and they must not drift. Pre-releases are produced on demand from any branch so a change can be tried on a real host before it is merged.
+
+## Working in this repo
+
+- Line endings are forced to LF because everything here runs on Linux even when it is edited on Windows.
+- Nothing may depend on file modes or executable bits from the checkout, for the same reason.
+- Comments say why, not what.
+- If a change needs a new tool on the host, it is the wrong change; put the tool in a container stage.
+```
+
+- [ ] **Step 4: Commit and push**
 
 ```bash
-git add README.md ROADMAP.md
-git commit -m "Document install, build and release for the nFPM pipeline"
+git add README.md ROADMAP.md CLAUDE.md
+git commit -m "Document usage, release procedure and design rationale"
 git push origin feature/nfpm-pipeline
 ```
 
-- [ ] **Step 4: Hand over**
+Then run `gh pr checks --watch` and confirm both build jobs are still green.
 
-Report to the user: CI status, the PR link, and the two `.bak` paths created in Task 1 as candidates for clean-up. Cutting the first release (merging and tagging `v1.12.1-1`) is the user's call.
+- [ ] **Step 5: Hand over**
+
+Mark the PR ready for review and report to the user: CI status and the PR link. Merging is the user's call. After the merge, exercise the pre-release path once with `gh workflow run build --ref master` and confirm a pre-release appears with two `.deb` files and a `SHA256SUMS`; then the user can tag `v1.12.1-1` for the first final release.
