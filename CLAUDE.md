@@ -6,7 +6,7 @@ This repo repackages the upstream Prometheus node_exporter release binary as a D
 
 **Repackage, never rebuild.** The binary is upstream's own release artifact. Compiling it here would add a toolchain to maintain and would make the package differ from what upstream tested.
 
-**Pin and verify everything that is downloaded.** The upstream version and its checksums are committed, and the build fails on a mismatch. The checksums come from a commit a human reviewed, not from the place the tarball is downloaded from, so a tampered upstream release cannot slip through. The same reasoning is why build tools and CI actions are pinned by digest or commit rather than by a moving tag.
+**Pin and verify everything that is downloaded.** The upstream version and its checksums are committed, and the build fails on a mismatch. The checksums come from a commit a human reviewed, not from the place the tarball is downloaded from, so a tampered upstream release cannot slip through. The same reasoning is why nFPM and the CI actions are pinned by digest or commit rather than by a moving tag. The Debian base image is the one deliberate exception: it follows its release tag so the build tools get security updates and the smoke test runs against Debian as hosts currently have it.
 
 **All versions live in one place.** A version bump should be a one-file change that is easy to review.
 

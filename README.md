@@ -49,7 +49,7 @@ podman build --target test --tag node-exporter-smoke .
 podman run --rm --tty --privileged node-exporter-smoke
 ```
 
-The test boots a throw-away Debian container with systemd, installs the package in it and checks that the exporter runs. Among systemd's own boot messages it prints `SMOKE PASS` and exits 0 on success, or `SMOKE FAIL: <reason>` and a non-zero code.
+The test boots a throw-away Debian container with systemd, installs the package in it and checks that the exporter runs. Among systemd's own boot messages it prints `SMOKE PASS` and exits 0 on success; on failure it exits non-zero, normally with a `SMOKE FAIL: <reason>` line.
 
 Add `--platform linux/arm64` to the first `build` to produce the other architecture. The test runs on your machine's own architecture.
 

@@ -81,7 +81,7 @@ Three stages:
 | `package` | `scratch` | Holds only the `.deb`, to be copied out to the host |
 | `test` | Debian slim with systemd, on the target platform | Boots systemd and runs the smoke test |
 
-nFPM comes from its official image, pinned by tag and digest, and is copied into the `build` stage.
+nFPM comes from its official image, pinned by the digest of its multi-architecture index (Podman rejects a reference with both a tag and a digest), and is copied into the `build` stage.
 
 `build` runs on the build platform and only reads the target architecture as a value, because packaging is a download-and-repack: an arm64 package can be produced on an amd64 machine without emulation. `test` needs the target platform, so it runs natively: any developer machine tests its own architecture, and CI uses one native runner per architecture.
 

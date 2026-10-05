@@ -9,7 +9,7 @@ fail() {
 # Installed on the running system rather than while building the image,
 # because that is the path a real host takes: postinstall has to create the
 # user and directories and start the service itself.
-dpkg --install /smoke/*.deb
+dpkg --install /smoke/*.deb || fail "package did not install"
 
 systemctl is-enabled --quiet node-exporter.service || fail "service is not enabled"
 
