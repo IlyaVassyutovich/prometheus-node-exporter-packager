@@ -40,7 +40,7 @@ Version 1 of this repo (`make-deb.ps1` plus a `deb/` tree built with `dpkg-deb`)
 
 ```
 versions.env                  upstream version, package revision, SHA256 per arch
-Containerfile                 stages: build, package, test
+Dockerfile                    stages: build, package, test
 build.sh <arch>               runs inside the build stage: download, verify, extract, nFPM
 nfpm.yaml                     package definition; version and arch come from the environment
 packaging/
@@ -71,14 +71,14 @@ Plain `KEY=value` lines, readable by shell and by systemd's `EnvironmentFile`:
 - `PACKAGE_REVISION` — Debian revision, starts at `1`, reset to `1` on every upstream bump
 - `NODE_EXPORTER_SHA256_AMD64`, `NODE_EXPORTER_SHA256_ARM64` — SHA256 of the upstream `linux-<arch>` tarballs
 
-### Container build (`Containerfile`)
+### Container build (`Dockerfile`)
 
 Three stages:
 
 | Stage | Base | What it does |
 |---|---|---|
 | `build` | Debian slim, on the build machine's own platform | Has `curl` and a pinned nFPM; runs `build.sh` for the target architecture |
-| `package` | `scratch` | Holds only the `.deb`, so `--output` can export it to the host |
+| `package` | `scratch` | Holds only the `.deb`, to be copied out to the host |
 | `test` | Debian slim with systemd, on the target platform | Boots systemd and runs the smoke test |
 
 nFPM comes from its official image, pinned by tag and digest, and is copied into the `build` stage.
@@ -90,10 +90,16 @@ An optional `PRERELEASE` build argument is appended to the Debian revision (see 
 The three commands that make up the harness, identical for `docker` and `podman`, locally and in CI:
 
 ```
-<engine> build --target package --output dist .
+<engine> build --target package --tag node-exporter-package .
+<engine> create --name node-exporter-package node-exporter-package
+<engine> cp node-exporter-package:/dist/. dist
+<engine> rm node-exporter-package
+
 <engine> build --target test --tag node-exporter-smoke .
 <engine> run --rm --tty --privileged node-exporter-smoke
 ```
+
+The package is copied out of a created container because `build --output`, the shorter way, is not supported by Podman on Windows and macOS.
 
 `--tty` is needed because systemd writes nothing to the container's output without a terminal; `--privileged` because systemd needs to manage cgroups and mounts.
 
